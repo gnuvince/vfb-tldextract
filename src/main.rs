@@ -1,5 +1,4 @@
 use flate2::read::GzDecoder;
-use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -20,12 +19,6 @@ struct Cli {
 
     #[structopt(parse(from_os_str))]
     rejected_file: PathBuf,
-}
-
-#[derive(Deserialize)]
-struct RdnsRecord {
-    name: String,
-    value: String,
 }
 
 fn parse_tld_file(filename: &PathBuf) -> anyhow::Result<HashSet<String>> {
@@ -69,6 +62,115 @@ fn domain_for<'a, 'b>(host: &'a str, tld_set: &'b HashSet<String>) -> Option<&'a
     return Some(&host[start..frontier]);
 }
 
+#[derive(Debug)]
+struct RdnsInfoPositions {
+    name: (usize, usize),
+    value: (usize, usize),
+}
+
+#[derive(Debug)]
+struct Parser<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn is_white(c: u8) -> bool {
+        let b0 = c == b' ';
+        let b1 = c == b'\t';
+        let b2 = c == b'\n';
+        let b3 = c == b'\r';
+        return b0 | b1 | b2 | b3;
+    }
+
+    fn skip_white(&mut self) {
+        while let Some(b) = self.buf.get(self.pos) {
+            if Self::is_white(*b) {
+                self.pos += 1;
+            } else {
+                return;
+            }
+        }
+    }
+
+    fn expect(&mut self, c: u8) -> Option<()> {
+        self.skip_white();
+        if self.buf[self.pos] == c {
+            self.pos += 1;
+            return Some(());
+        } else {
+            return None;
+        }
+    }
+
+    fn peek(&self) -> u8 {
+        return *self.buf.get(self.pos).unwrap_or(&0);
+    }
+
+    fn string(&mut self) -> Option<(usize, usize)> {
+        self.expect(b'"')?;
+        let start = self.pos;
+        while self.peek() != b'"' {
+            self.pos += 1;
+        }
+        let end = self.pos;
+        self.expect(b'"')?;
+        return Some((start, end));
+    }
+
+    fn parse(&mut self) -> Option<RdnsInfoPositions> {
+        self.expect(b'{')?;
+        self.skip_white();
+
+        let _ts_key = self.string()?;
+        self.expect(b':')?;
+        let _ts_val = self.string()?;
+        self.expect(b',')?;
+
+        let name_key = self.string()?;
+        self.expect(b':')?;
+        let name_val = self.string()?;
+        self.expect(b',')?;
+
+        let _ptr_key = self.string()?;
+        self.expect(b':')?;
+        let _ptr_val = self.string()?;
+        self.expect(b',')?;
+
+        let value_key = self.string()?;
+        self.expect(b':')?;
+        let value_val = self.string()?;
+        self.expect(b'}')?;
+
+        assert_eq!(&self.buf[value_key.0..value_key.1], b"value");
+        assert_eq!(&self.buf[name_key.0..name_key.1], b"name");
+
+        return Some(RdnsInfoPositions {
+            name: name_val,
+            value: value_val,
+        });
+    }
+}
+
+fn buf_to_str(buf: &[u8], (start, end): (usize, usize)) -> anyhow::Result<&str> {
+    return Ok(std::str::from_utf8(&buf[start..end])?);
+}
+
+// fn main() -> anyhow::Result<()> {
+//     let mut p = Parser {
+//         buf: br#"{"timestamp": "1627467007", "name": "1.120.175.74", "type": "cname", "value": "cpe-1-120-175-74.4cbp-r-037.cha.qld.bigpond.net.au"}"#,
+//         pos: 0,
+//     };
+//     println!("{:?}", p);
+//     let x = p.parse();
+//     println!("{:?}", p);
+//     println!("{:?}", x);
+//     let x = x.unwrap();
+//     println!("{:?}", buf_to_str(&p.buf, x.name)?);
+//     println!("{:?}", buf_to_str(&p.buf, x.value)?);
+//     return Ok(());
+// }
+
 fn main() -> anyhow::Result<()> {
     let args = Cli::from_args();
     let file = File::open(&args.input_file)?;
@@ -105,15 +207,23 @@ fn main() -> anyhow::Result<()> {
 
         num_lines += 1;
 
-        let record: RdnsRecord = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(_) => {
+        let mut parser = Parser {
+            buf: line.as_bytes(),
+            pos: 0,
+        };
+        let rdns = match parser.parse() {
+            Some(rdns) => rdns,
+            None => {
                 eprintln!("{}: cannot deserialize this line: {:?}", PROG, line);
                 continue;
             }
         };
-        if let Some(domain) = domain_for(&record.value, &tld_set) {
-            let ip: u32 = u32::from(Ipv4Addr::from_str(&record.name)?);
+
+        let ip = buf_to_str(&parser.buf, rdns.name)?;
+        let domain = buf_to_str(&parser.buf, rdns.value)?;
+
+        if let Some(domain) = domain_for(domain, &tld_set) {
+            let ip: u32 = u32::from(Ipv4Addr::from_str(ip)?);
             writeln!(stdout, "{},{}", ip, domain)?;
         }
     }

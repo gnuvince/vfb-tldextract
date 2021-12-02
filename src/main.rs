@@ -140,8 +140,8 @@ impl<'a> Parser<'a> {
         let value_val = self.string()?;
         self.expect(b'}')?;
 
-        assert_eq!(&self.buf[value_key.0..value_key.1], b"value");
-        assert_eq!(&self.buf[name_key.0..name_key.1], b"name");
+        // assert_eq!(&self.buf[value_key.0..value_key.1], b"value");
+        // assert_eq!(&self.buf[name_key.0..name_key.1], b"name");
 
         return Some(RdnsInfoPositions {
             name: name_val,

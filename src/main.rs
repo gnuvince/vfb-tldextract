@@ -2,9 +2,7 @@ use flate2::read::GzDecoder;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use std::str::FromStr;
 use structopt::StructOpt;
 
 const PROG: &str = env!("CARGO_BIN_NAME");
@@ -152,8 +150,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn buf_to_str(buf: &[u8], (start, end): (usize, usize)) -> anyhow::Result<&str> {
-    return Ok(std::str::from_utf8(&buf[start..end])?);
+fn buf_to_str(buf: &[u8], (start, end): (usize, usize)) -> &str {
+    return unsafe { std::str::from_utf8_unchecked(&buf[start..end]) };
 }
 
 fn ipv4_to_u32(s: &[u8]) -> u32 {
@@ -239,7 +237,7 @@ fn main() -> anyhow::Result<()> {
             }
         };
 
-        let domain = buf_to_str(&parser.buf, rdns.value)?;
+        let domain = buf_to_str(&parser.buf, rdns.value);
 
         if let Some(domain) = domain_for(domain, &tld_set) {
             let ip: u32 = ipv4_to_u32(&parser.buf[rdns.name.0..rdns.name.1]);

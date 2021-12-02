@@ -156,6 +156,26 @@ fn buf_to_str(buf: &[u8], (start, end): (usize, usize)) -> anyhow::Result<&str> 
     return Ok(std::str::from_utf8(&buf[start..end])?);
 }
 
+fn ipv4_to_u32(s: &[u8]) -> u32 {
+    let mut ip: u32 = 0;
+    let mut octet: u32 = 0;
+    let mut curr_octet: usize = 0;
+    let shifts: [u32; 4] = [24, 16, 8, 0];
+    for b in s {
+        if *b == b'.' {
+            let shift = shifts[curr_octet];
+            ip += octet << shift;
+            curr_octet += 1;
+            octet = 0;
+        } else {
+            octet = octet * 10 + (*b - b'0') as u32;
+        }
+    }
+    let shift = shifts[curr_octet];
+    ip += octet << shift;
+    return ip;
+}
+
 // fn main() -> anyhow::Result<()> {
 //     let mut p = Parser {
 //         buf: br#"{"timestamp": "1627467007", "name": "1.120.175.74", "type": "cname", "value": "cpe-1-120-175-74.4cbp-r-037.cha.qld.bigpond.net.au"}"#,
@@ -219,11 +239,10 @@ fn main() -> anyhow::Result<()> {
             }
         };
 
-        let ip = buf_to_str(&parser.buf, rdns.name)?;
         let domain = buf_to_str(&parser.buf, rdns.value)?;
 
         if let Some(domain) = domain_for(domain, &tld_set) {
-            let ip: u32 = u32::from(Ipv4Addr::from_str(ip)?);
+            let ip: u32 = ipv4_to_u32(&parser.buf[rdns.name.0..rdns.name.1]);
             writeln!(stdout, "{},{}", ip, domain)?;
         }
     }
@@ -236,3 +255,8 @@ fn main() -> anyhow::Result<()> {
     );
     return Ok(());
 }
+
+// fn main() {
+//     println!("{}", ipv4_to_u32(b"192.168.32.1"));
+//     println!("{}", u32::from(Ipv4Addr::from_str("192.168.32.1").unwrap()));
+// }
